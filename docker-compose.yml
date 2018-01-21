@@ -1,0 +1,99 @@
+version: '2'
+services:
+  prometheus:
+    build:
+      context: ./prometheus
+    ports:
+      - "9090:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+  
+  redis:
+    image: redis
+
+  postgres:
+    image: postgres
+    environment:
+      POSTGRES_PASSWORD: secret
+      POSTGRES_USER: sentry
+
+  sentry-web:
+    image: sentry:8.19
+    command: > 
+      bash -c "pip uninstall -y redis \
+        && pip install redis==2.10.5 \
+        && pip install 'botocore<1.8.0,>=1.7.0' \
+        && sentry run web"
+    ports:
+      - 8080:9000
+    links:
+      - redis
+      - postgres
+    environment:
+      SENTRY_SECRET_KEY: 'notasecretkey'
+      SENTRY_USE_SSL: 'false'
+      SENTRY_EMAIL_HOST: 'mail.example.com'
+      SENTRY_EMAIL_PASSWORD: ''
+      SENTRY_EMAIL_PORT: 587
+      SENTRY_EMAIL_USER: 'notify'
+      SENTRY_EMAIL_USE_TLS: 'true'
+      SENTRY_SERVER_EMAIL: 'notify@example.com'
+      SENTRY_REDIS_HOST: redis
+      SENTRY_METRICS_HOST: prometheusexporter
+      SENTRY_METRICS_PORT: 8125
+      DATABASE_URL: postgresql://sentry:secret@postgres:5432/sentry
+    volumes:
+      - ./sentry.conf.py:/etc/sentry/sentry.conf.py:ro
+
+  sentry-cron:
+    image: sentry:8.19
+    links:
+      - redis
+      - postgres
+    command: >
+      bash -c "pip uninstall -y redis \
+        && pip install redis==2.10.5 \
+        && pip install 'botocore<1.8.0,>=1.7.0' \
+        && sentry run cron"
+    environment:
+      SENTRY_SECRET_KEY: 'notasecretkey'
+      SENTRY_REDIS_HOST: redis
+      DATABASE_URL: postgresql://sentry:secret@postgres:5432/sentry
+      SENTRY_METRICS_HOST: prometheusexporter
+      SENTRY_METRICS_PORT: 8125
+    volumes:
+      - ./sentry.conf.py:/etc/sentry/sentry.conf.py:ro
+
+  sentry-worker:
+    image: sentry:8.19
+    links:
+      - redis
+      - postgres
+    command: >
+      bash -c "pip uninstall -y redis \
+        && pip install redis==2.10.5 \
+        && pip install 'botocore<1.8.0,>=1.7.0' \
+        && sentry run worker"
+    environment:
+      SENTRY_SECRET_KEY: 'notasecretkey'
+      SENTRY_REDIS_HOST: redis
+      DATABASE_URL: postgresql://sentry:secret@postgres:5432/sentry
+      # prom statd exporter host
+      SENTRY_METRICS_HOST: prometheusexporter
+      # port to send statsd metrics
+      SENTRY_METRICS_PORT: 8125
+      # prevent worker from exiting, NSFW
+      C_FORCE_ROOT: "true"
+    volumes:
+      - ./sentry.conf.py:/etc/sentry/sentry.conf.py:ro
+
+  prometheusexporter:
+    image: prom/statsd-exporter:latest
+    command: -statsd.listen-udp=:8125
+    ports:
+      - 9102:9102
+      - 9125:9125
+      - 125:9125/udp
+      # port to receive statsd metrics
+      - 8125:8125/udp
+
